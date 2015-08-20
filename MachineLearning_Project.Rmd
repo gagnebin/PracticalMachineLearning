@@ -1,0 +1,145 @@
+---
+title: "Machine Learning - Peer Assessments"
+author: "Solange"
+date: "August 18, 2015"
+output: html_document
+---
+
+## Executive summary
+
+The goal of this project is to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants and to predict "how well" (outcome: classe) they performed barbell lifts exercises. The data for this project come from this [source](http://groupware.les.inf.puc-rio.br/har) and all infromation about the variables can be found there.
+
+The report contains 3 main parts: 1) pre-processing and exploratory data analysis, 2) prediction model building and out-of-error evaluation, 3) Conclusion.
+
+
+---
+
+## Pre-processing and exploratory data analysis
+
+The training "pml-training.csv" and testing data contains "pml-testing.csv" contain 19622 and 20 observables for 160 variables respectively. First a pre-processing and an exploration of the data will be performed. All data frame manipulation done on the trainning set are also done on the testing set.
+
+```{r, echo=TRUE,eval=TRUE}
+
+setwd("D:/Mes_Documents/coursera/MachineLearning")
+library(caret)
+library(rattle)
+
+# Read csv data
+file_name <- "pml-training.csv"
+trainingset<- read.csv(file_name, na.strings = c("NA", ""))
+
+file_name <- "pml-testing.csv"
+testingset<- read.csv(file_name, na.strings = c("NA", ""))
+
+# Check that the two data sets have the same columns (except classe)
+colnames(trainingset)[which(colnames(testingset) != colnames(trainingset))]
+
+# Remove columns which have more than 60% of NA and row index column
+sumNA <- apply(trainingset, 2, function(x) sum(is.na(x)))
+trainingset_new <- trainingset[,which(sumNA < 0.6*dim(trainingset)[1])]
+trainingset_new <- trainingset_new[, -grep("X", colnames(trainingset_new))]
+
+testingset_new <- testingset[,which(sumNA < 0.6*dim(testingset)[1])]
+testingset_new <- testingset_new[, -grep("X", colnames(testingset_new))]
+
+# Extract relevant information from the timestamp
+trainingset_new$date = strptime(trainingset_new$cvtd_timestamp, "%d/%m/%Y %H:%M")
+testingset_new$date = strptime(testingset_new$cvtd_timestamp, "%d/%m/%Y %H:%M")
+
+# add a variable to dataset called "weekday" that contains 
+# the day of the week that the measurement was done (0 = Sunday, 1 = Monday, etc.)
+trainingset_new$weekday = trainingset_new$date$wday
+testingset_new$weekday = testingset_new$date$wday
+
+# add a variable to dataset called "day" that contains 
+# the day that the measurement was done
+trainingset_new$day = trainingset_new$date$mday
+testingset_new$day = testingset_new$date$mday
+
+# add a variable to your datasets called "hour" that contains 
+# the hour that the measurement was done
+trainingset_new$hour = trainingset_new$date$hour
+testingset_new$hour = testingset_new$date$hour
+
+# add a variable to your datasets called "minute" that contains 
+# the minutes that the measurement was done
+trainingset_new$minute = trainingset_new$date$minute
+testingset_new$minute = testingset_new$date$minute
+
+# Remove now timestamp as we extract all information and date columns
+trainingset_new <- trainingset_new[, -grep("timestamp", colnames(trainingset_new))]
+trainingset_new <- trainingset_new[, -grep("date", colnames(trainingset_new))]
+
+testingset_new <- testingset_new[, -grep("timestamp", colnames(testingset_new))]
+testingset_new <- testingset_new[, -grep("date", colnames(testingset_new))]
+
+```
+
+The exploration plot below shows that there are no obvious linear relationship with the "total" variables and the outcome. Additionnaly, as the outcome is categorical with 5 levels, a calssification tree such as a CART or random forest model seem to be a reasonnable choice for this data set. 
+
+```{r, echo=TRUE, eval=TRUE}
+# Only the total variables are plotted here
+predictors_plot_index = grep("total",colnames(trainingset_new))
+outcome_index = grep("classe",colnames(trainingset_new))
+
+featurePlot(x=trainingset_new[,c(1, predictors_plot_index)], y= trainingset_new[,outcome_index], plot = "pairs")
+```
+
+---
+
+## Prediction model building and out-of-error evaluation
+First a CART model will be perfomed on the training data set to explore which features should be selected. CART model is chosen for its easy interpretation:
+
+```{r, echo=TRUE, eval=TRUE}
+modelFit <- train(classe ~ ., data = trainingset_new, method = "rpart")
+
+fancyRpartPlot(modelFit$finalModel)
+```
+
+It seems that only four features are used in the model. Now a random forest algorithm will be trained using those four features. The default cross-validation will not be used, but instead a Repeated Cross-validation will be chosen to tune our model. That give more control on the cross-validation which highly used in random forest to avoid over-fitting: 
+
+```{r, echo=TRUE, eval=TRUE}
+cvCtrl <- trainControl(method = "repeatedcv", number = 10, repeats = 5)
+
+modelFit2 <- train(classe ~ pitch_forearm + roll_forearm + roll_belt + magnet_dumbbell_y
+                  , data = trainingset_new, method = "rf", trControl = cvCtrl)
+
+
+print(modelFit2$finalModel)
+```
+
+The out-of-sample error will be estimate using the training set on the prediction:
+```{r, echo=TRUE, eval=TRUE}
+predtrain <- predict(modelFit2)
+confusionMatrix(trainingset_new$classe, predtrain)
+```
+
+Now we know that the prediction is performing well with an 0.95 accuracy on the training set, so we will generate the prediction on the testing set and the results will be saved in a text file:
+
+```{r, echo=TRUE, eval=TRUE}
+predtrain <- predict(modelFit2, testingset_new)
+
+answers = as.character(predtrain)
+
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+
+pml_write_files(answers)
+```
+
+---
+
+## Conclusion
+
+Random forest (rf) was chosen as a final model for the following reason:
+1. Accurate model
+1. Robust again overfitting if cross-validation is used when growing trees
+
+Unfortunately rf is really slow to run in particular when the number of trees and repetion in the cross-validation are high. The model could surely have been tuned more, but to avoid to have an overfitting problem no supplementary tuning was performed. Accoring to this model the testing set is expected to have 18 correct answers over 20 which correspond to 0.9 accuracy.
+
+The data exploration should be more in depth to understand the relationship between the different features and the outcome, however for keeping this report as short as possible only a basic feature plot was presented.
