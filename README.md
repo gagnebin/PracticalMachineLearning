@@ -1,5 +1,5 @@
-# PracticalMachineLearning2
-Coursera Machine Learning
+# PracticalMachineLearning
+Example Machine Learning
 
 In this repository, you will find the following files:
 * pml-testing.csv: raw file of the testing data set used for this project
